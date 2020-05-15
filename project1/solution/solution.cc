@@ -14,7 +14,7 @@
 using namespace std;
 using namespace Boost::Internal;
 
-const vector<string> cases({"example", "case1", "case4", "case5", "case6", "case7", "case10"});
+const vector<string> cases({"example", "case1", "case2", "case3", "case4", "case5", "case6", "case7", "case8", "case9", "case10"});
 
 extern vector<Stmt> result;
 extern map<string, Expr> varMap;
@@ -30,17 +30,22 @@ int main(){
     cout << IRPrinter().print(body) << endl;
 */
     for (const string &filename : cases){
+        try{
         result.clear();
 
         string inpath = "./cases/" + filename + ".json";
-        string outpath = "./kernels/kernel_" + filename + ".cc";
+        
         Json::Value root;
         Json::Reader reader;
 
         ifstream inf(inpath);
+        if (!inf) continue; 
+
         reader.parse(inf, root);
 
         string name = root["name"].asString();
+        string outpath = "./kernels/" + name + ".cc";
+
         string data_type = root["data_type"].asString();
         string kernel = root["kernel"].asString();
 
@@ -49,11 +54,14 @@ int main(){
         for (int i = 0; i < in_size; i++){
             in_args.push_back(root["ins"][i].asString());
         }
+        set<string> ind_set(in_args.begin(), in_args.end());
 
         vector<string> out_args;
         int out_size = root["outs"].size();
         for (int i = 0; i < out_size; i++){
-            out_args.push_back(root["outs"][i].asString());
+            string id = root["outs"][i].asString();
+            if (ind_set.count(id) > 0) continue;
+            out_args.push_back(id);
         }
 
         if (data_type == "float") var_type = data_type_f;
@@ -63,7 +71,7 @@ int main(){
         yyparse();
         delete_buffer();
 
-        Stmt body = StmtList::make(result);
+        //Stmt body = StmtList::make(result);
         vector<Expr> in_expr;
         for (const string &s : in_args){
             in_expr.push_back(varMap[s]);
@@ -71,7 +79,7 @@ int main(){
 
         vector<Expr> out_expr;
         for (const string &s : out_args){
-            in_expr.push_back(varMap[s]);
+            out_expr.push_back(varMap[s]);
         }
 
         Group proc = Kernel::make(name, in_expr, out_expr, result, KernelType::CPU);
@@ -81,6 +89,8 @@ int main(){
         IRPrinter printer;
         outf << "#include \"../run.h\"\n\n";
         outf << printer.print(proc) << endl;
+        }
+        catch(...){}
     }
 
     return 0;
