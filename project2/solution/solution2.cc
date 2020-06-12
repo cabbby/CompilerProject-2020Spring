@@ -167,7 +167,99 @@ string element_wise(pair<string, string> pairs, string grad_id, string out_id, v
 			tmp_str = tmp_str + c[i];
 		i++;
 	}
-	return ret + "*(" + tmp_str + ");";
+	return ret + "*" + tmp_str + ";";
+}
+
+pair<map<string, string>, string> Get_identifier_range(string str) {
+	const char *c = str.c_str();
+	map<string, string> mp;
+	string exp = "";
+	mp.clear();
+	int len = strlen(c);
+	int i = 0, flag = 0;
+	while (i < len) {
+		string tmp = "";
+		while ((c[i] >= 'A' && c[i] <= 'Z') || (c[i] >= 'a' && c[i] <= 'z')) {
+			tmp =tmp + c[i], i++;
+			if (i == len) break;
+		}
+		if (flag) {
+			exp = exp + tmp;
+		}
+		string range = "";
+		if (tmp != "") {
+			while (c[i] != '<') i++;
+			while (c[i] != ']') {
+				range = range + c[i];
+				i++;
+			}
+			range = range + c[i];
+			mp[tmp] = range;
+		}
+		if (flag && c[i] != ' ' && c[i] != ';' && c[i] != ']')
+			exp += c[i];
+		if (c[i] == '=')
+			flag = 1;
+		i++;
+	}
+	return make_pair(mp, exp);
+}
+
+bool check_identifier(string str) {
+	const char *c = str.c_str();
+	map<string, bool> mp;
+	mp.clear();
+	int len = strlen(c);
+	int i = 0, flag = 0;
+	while (i < len) {
+		string tmp = "";
+		if (flag == 0) {
+			while ((c[i] >= 'A' && c[i] <= 'Z') || (c[i] >= 'a' && c[i] <= 'z')) {
+				tmp =tmp + c[i], i++;
+				if (i == len) break;
+			}
+		}
+		if (mp[tmp] == 1 && tmp != "")
+			return false;
+		if (c[i] == '[')
+			flag = 1;
+		if (c[i] == ']')
+			flag = 0;
+		mp[tmp] = 1, i++;
+	}
+	return true;
+}
+
+string no_transformation(string exp, map<string, string> maps, string grad_id, string out_id, vector<string> in_args) {
+	string ret = "d" + grad_id + maps[grad_id] + '=' + "d" + out_id + maps[out_id];
+	string str = Expression_derivation(exp, grad_id);
+	string tmp_str = "";
+	const char *c = str.c_str();
+	int len = strlen(c);
+	int i = 0;
+	while (i < len) {
+		string tmp = "";
+		while ((c[i] >= 'A' && c[i] <= 'Z') || (c[i] >= 'a' && c[i] <= 'z')) {
+			tmp =tmp + c[i], i++;
+			if (i == len) break;
+		}
+		bool flag = 0;
+		if (tmp != "") {
+			for (const string &s : in_args) {
+				if (s == tmp) {
+					flag = 1;
+				}
+			}
+			if (flag)
+				tmp_str = tmp_str + tmp + maps[tmp];
+			else
+				tmp_str = tmp_str;
+		}
+		if (i < len)
+			tmp_str = tmp_str + c[i];
+		i++;
+	}
+	return ret + "*" + tmp_str + ";";
 }
 
 int main(){
@@ -227,8 +319,8 @@ int main(){
 				for (int i = 0; i < grad_size; i++)
 					grad_exp = grad_exp + element_wise(pr, root["grad_to"][i].asString(), root["outs"][0].asString(), in_args);
 
-				cout << grad_exp << endl;
-				cout << kernel << endl;
+				//cout << grad_exp << endl;
+				//cout << kernel << endl;
 				scan_string(grad_exp.c_str());
 				yyparse();
 				delete_buffer();
@@ -238,7 +330,7 @@ int main(){
 				for (const string &s : in_args){
 					if (checkin(s, grad_exp)) {
 						in_expr.push_back(varMap[s]);
-						cout << s << endl;
+						//cout << s << endl;
 					}
 				}
 
@@ -254,9 +346,58 @@ int main(){
 				IRPrinter printer;
 				outf << "#include \"../run2.h\"\n\n";
 				outf << printer.print(proc) << endl;
+				continue;
 			}
 
 			//End of element-wise
+
+			//检查每个Identifier是否在表达式中只出现一次
+			if (check_identifier(kernel)) {
+				pair<map<string, string>, string> pairs = Get_identifier_range(kernel);
+				map<string, string> mp = pairs.first;
+				string exp = pairs.second;
+				bool flag = 1;
+				//检查是否有下标的算术变换
+				for (pair<string, string> pr : mp) {
+					string st = pr.second;
+					if (st.find("+") != st.npos || st.find("*") != st.npos ||
+						st.find("%") != st.npos || st.find("-") != st.npos || st.find("//") != st.npos)
+						flag = 0;
+				}
+				if (flag) {
+					string grad_exp = "";
+					int grad_size = root["grad_to"].size();
+					for (int i = 0; i < grad_size; i++)
+						grad_exp = grad_exp + no_transformation(exp, mp, root["grad_to"][i].asString(), root["outs"][0].asString(), in_args);
+					cout << grad_exp << endl;
+					scan_string(grad_exp.c_str());
+					yyparse();
+					delete_buffer();
+
+					//Stmt body = StmtList::make(result);
+					vector<Expr> in_expr;
+					for (const string &s : in_args){
+						if (checkin(s, grad_exp)) {
+							in_expr.push_back(varMap[s]);
+							//cout << s << endl;
+						}
+					}
+
+					vector<Expr> out_expr;
+					for (const string &s : out_args){
+						out_expr.push_back(varMap[s]);
+					}
+
+					Group proc = Kernel::make(name, in_expr, out_expr, result, KernelType::CPU);
+
+					ofstream outf(outpath);
+
+					IRPrinter printer;
+					outf << "#include \"../run2.h\"\n\n";
+					outf << printer.print(proc) << endl;
+					continue;
+				}
+			}
         }
 		catch(...){}
     }
