@@ -18,7 +18,7 @@ using namespace std;
 using namespace Boost::Internal;
 
 //const vector<string> cases({"case1", "case2", "case3", "case4", "case5", "case6", "case7", "case8", "case9", "case10"});
-const vector<string> cases({"case1", "case2", "case3", "case4", "case5", "case6", "case7", "case8", "case9"});
+const vector<string> cases({"case1", "case2", "case3", "case4", "case5", "case6", "case7", "case8", "case9", "case10"});
 const double eps = 1e-6;
 
 extern vector<Stmt> result;
@@ -27,6 +27,14 @@ extern Type var_type, data_type_i, data_type_f;
 extern void scan_string(const char *s);
 extern void delete_buffer();
 
+map<string, vector<Expr> > var_appearance_map;
+
+bool is_same_var(const Expr& a, const Expr& b) {
+	auto var_a = a.as<Var>();
+	auto var_b = b.as<Var>();
+	if (var_a == nullptr || var_b == nullptr) return false;
+	return (IRPrinter().print(var_a) == IRPrinter().print(var_b));
+}
 
 set<string> in_set; // set of in_args in final code 
 
@@ -44,7 +52,8 @@ Expr visit(Ref<const FloatImm> op) override {
 
 Expr visit(Ref<const Var> op) override { // TODO: diff actions for diff indices. e.g. A[i, j] and A[i-1, j]
     //cout << "Var: " << op->name << endl;
-	int val = ("d" + op->name == (grad_to.as<Var>())->name) ? 1 : 0; // dx/dx = 1, dy/dx = 0
+	Expr new_var = Var::make(op->type(), "d" + op->name, op->args, op->shape);
+	int val = is_same_var(new_var, grad_to) ? 1 : 0; // dx/dx = 1, dy/dx = 0
 
 	if (op->type() == data_type_i) return IntImm::make(data_type_i, val);
 	else return FloatImm::make(data_type_f, val);
@@ -62,7 +71,9 @@ Expr visit(Ref<const Binary> op) override {
 		Expr bda = Binary::make(op->type(), BinaryOpType::Mul, new_a, op->b);
 	    return Binary::make(op->type(), BinaryOpType::Add, adb, bda);
 	}
-	// TODO: division (by a constant)
+	else if (op->op_type == BinaryOpType::Div){ // TODO: cases when b is not constant
+	    return Binary::make(op->type(), BinaryOpType::Div, new_a, op->b);
+	}
 	return op;
 }
 
@@ -157,13 +168,39 @@ Stmt visit(Ref<const IfThenElse> op) override {
 
 };
 
+class VarAppearanceVisitor: public IRVisitor{
+public:
+void visit(Ref<const Var> op) override{
+    string name = op->name;
+	if (var_appearance_map.count(name) == 0){ // never appeared before
+	    var_appearance_map[name] = {op};
+	}
+	else{ // appeared before
+	for (auto &t: var_appearance_map[name]){
+		if (is_same_var(op, t)) return;
+	}
+	var_appearance_map[name].push_back(op);
+	}
+}
+
+void visit(Ref<const IfThenElse> op) override {
+    (op->cond).visit_expr(this);
+    (op->true_case).visit_stmt(this);
+	if ((op->false_case).defined()) {
+		(op->false_case).visit_stmt(this);
+	}
+    
+    return;
+}    
+};
+
 class CountVarVisitor: public IRVisitor{
 public:
 void visit(Ref<const Var> op) override{
     in_set.insert(op->name);
 }
 
-void visit(Ref<const IfThenElse> op) {
+void visit(Ref<const IfThenElse> op) override {
     (op->cond).visit_expr(this);
     (op->true_case).visit_stmt(this);
 	if ((op->false_case).defined()) {
@@ -175,6 +212,7 @@ void visit(Ref<const IfThenElse> op) {
 
 };
 
+
 int main(){
     for (const string &filename : cases) {
         try {
@@ -182,6 +220,7 @@ int main(){
 			result.clear();
 			varMap.clear();
 			in_set.clear();
+			var_appearance_map.clear();
 
 			string inpath = "./cases/" + filename + ".json";
         
@@ -226,34 +265,38 @@ int main(){
 
 			DiffMutator diffMutator;
 			SimplifyMutator simplifyMutator;
+			VarAppearanceVisitor varAppearanceVisitor;
 			CountVarVisitor countVarVisitor;
+
+			result[0].visit_stmt(&varAppearanceVisitor);
 
 			auto tmp = varMap[s_grad_from].as<Var>();
 			Expr grad_from = Var::make(tmp->type(), "d" + tmp->name, tmp->args, tmp->shape);
-			vector<Expr> grad_expr, out_expr;
-			for (const string &s : out_args){
-				grad_expr.push_back(varMap[s]);
-			}
+			vector<Expr> out_expr;
 
 			
 			vector<Stmt> diffStmt;
 			diffMutator.grad_from = grad_from;
-			for (int i = 0; i < grad_expr.size(); i++){
-				auto tmp = grad_expr[i].as<Var>();
-				Expr dtmp = Var::make(tmp->type(), "d" + tmp->name, tmp->args, tmp->shape);
-				out_expr.push_back(dtmp);
-				diffMutator.grad_to = dtmp;
+			for (const string &grad_name : out_args){
+				bool out_var_pushed = false;
 
-				Stmt s = diffMutator.mutate(result[0]);
-				s = simplifyMutator.mutate(s);
-
-				IRPrinter debug_printer;
-				cout << "after diffMutator: " << debug_printer.print(s) << endl;
-				s.visit_stmt(&countVarVisitor);
-				diffStmt.push_back(s);
+				for (auto &tmp: var_appearance_map[grad_name]){
+					auto tmp_var = tmp.as<Var>();
+					Expr dtmp = Var::make(tmp->type(), "d" + grad_name, tmp_var->args, tmp_var->shape);
+					if (!out_var_pushed) {
+						out_expr.push_back(dtmp);
+						out_var_pushed = true;
+					}
+					diffMutator.grad_to = dtmp;
+					
+					Stmt s = diffMutator.mutate(result[0]);
+					s = simplifyMutator.mutate(s);
+					
+					s.visit_stmt(&countVarVisitor);
+					diffStmt.push_back(s);
+				}
 			}
-			cout << "goo!\n";
-			
+
 			vector<Expr> in_expr;
 			for (const string& s: in_args){
 				if (in_set.count(s) > 0) in_expr.push_back(varMap[s]);
@@ -267,7 +310,6 @@ int main(){
 			IRPrinter printer;
 			outf << "#include \"../run2.h\"\n\n";
 			outf << printer.print(proc) << endl;
-			cout << "code: \n" << printer.print(proc) << endl;
         }
 		catch(...){}
     }
