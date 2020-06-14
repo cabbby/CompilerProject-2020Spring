@@ -2067,15 +2067,12 @@ Stmt getMainStmt(TRef& lhs, Expr& rhs) {
 
     vector<Stmt> body;
 
-    stringstream p;
-    string temp_name;
-    p << "temp" << temp_num++;
-    p >> temp_name;
 
     vector<size_t> shape;
     for (auto id : leftId)
         shape.push_back(bv.mp[id].second);
-    Expr temp = Var::make(var_type, temp_name, mapIdToExpr(mp, leftId), shape);
+
+    Expr dest = Var::make(var_type, lhs.id, mapIdToExpr(mp, leftId), shape);
 
     // 处理 RHS 的循环变量和条件判断
     for (auto e : visitor.res) {
@@ -2112,8 +2109,8 @@ Stmt getMainStmt(TRef& lhs, Expr& rhs) {
 
         // 生成每个求和部分的 Stmt
         Stmt s = Move::make(
-            temp, 
-            Binary::make(data_type_i, e.second == 1? BinaryOpType::Add: BinaryOpType::Sub, temp, e.first),
+            dest, 
+            Binary::make(data_type_i, e.second == 1? BinaryOpType::Add: BinaryOpType::Sub, dest, e.first),
             MoveType::MemToMem
         );
 
@@ -2148,36 +2145,7 @@ Stmt getMainStmt(TRef& lhs, Expr& rhs) {
         }
     }
 
-    // 将临时数组清空（实际上在最前面）
-    Stmt s1 = Move::make(temp, IntImm::make(data_type_i, 0), MoveType::MemToMem);
-    for (int i = stmtList.size() - 1; i >= 0; i--) {
-        if (stmtList[i].node_type() == IRNodeType::Var) {
-            // 是循环语句
-            string id = ((Var*) stmtList[i].get())->name;
-            // cout << id << endl;
-            s1 = LoopNest::make({mp[id]}, {s1});
-        } else {
-            // 是 if 语句
-            s1 = IfThenElse::make(stmtList[i], s1, Stmt());
-        }
-    }
-
-    // 将临时数组赋值回原位
-    Expr dest = Var::make(var_type, lhs.id, mapIdToExpr(mp, leftId), vector<size_t>(leftId.size(), 100));
-    Stmt s3 = Move::make(dest, temp, MoveType::MemToMem);
-    for (int i = stmtList.size() - 1; i >= 0; i--) {
-        if (stmtList[i].node_type() == IRNodeType::Var) {
-            // 是循环语句
-            string id = ((Var*) stmtList[i].get())->name;
-            // cout << id << endl;
-            s3 = LoopNest::make({mp[id]}, {s3});
-        } else {
-            // 是 if 语句
-            s3 = IfThenElse::make(stmtList[i], s3, Stmt());
-        }
-    }
-
-    return StmtList::make({VarDeclaration::make(temp), s1, s, s3});
+    return s;
 }
 
 ExprNode *exprp(Expr &e) {

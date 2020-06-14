@@ -243,7 +243,7 @@ string no_transformation(string exp, map<string, string> maps, string grad_id, s
 	}
 	return ret + "*" + tmp_str + ";";
 }
-
+/*
 int main(){
     for (const string &filename : cases) {
         try {
@@ -384,4 +384,4 @@ int main(){
     }
 
     return 0;
-}
+}*/
