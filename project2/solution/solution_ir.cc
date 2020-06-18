@@ -4,7 +4,7 @@
 #include <cstring>
 #include <string>
 #include <vector>
-#include <cstdlib>
+#include <cmath>
 #include "exp.tab.h"
 
 #include "IR.h"
@@ -71,7 +71,7 @@ Expr visit(Ref<const Binary> op) override {
 		Expr bda = Binary::make(op->type(), BinaryOpType::Mul, new_a, op->b);
 	    return Binary::make(op->type(), BinaryOpType::Add, adb, bda);
 	}
-	else if (op->op_type == BinaryOpType::Div){ // TODO: cases when b is not constant
+	else if (op->op_type == BinaryOpType::Div){
 	    return Binary::make(op->type(), BinaryOpType::Div, new_a, op->b);
 	}
 	return op;
@@ -108,12 +108,8 @@ Stmt visit(Ref<const LoopNest> op) override {
         new_body_list.push_back(mutate(body));
     }
     Stmt e =  LoopNest::make(op->index_list, new_body_list);
-	//IRPrinter debug_printer;
-	//cout << "Loop: " << debug_printer.print(e) << endl;
 	return e;
 }
-
-
 
 };
 
@@ -124,7 +120,7 @@ bool iszero(Expr op){
 		return (op.as<IntImm>()->value() == 0);
 	}
 	else if (op->node_type() == IRNodeType::FloatImm){
-		return (std::abs(op.as<FloatImm>()->value()) < eps);
+		return (fabs(op.as<FloatImm>()->value()) < eps);
 	}
 	return false;
 }
@@ -134,7 +130,7 @@ bool isone(Expr op){
 		return (op.as<IntImm>()->value() == 1);
 	}
 	else if (op->node_type() == IRNodeType::FloatImm){
-		return (std::abs(op.as<FloatImm>()->value() - 1.0) < eps);
+		return (fabs(op.as<FloatImm>()->value() - 1.0) < eps);
 	}
 	return false;
 }
@@ -164,7 +160,6 @@ Stmt visit(Ref<const IfThenElse> op) override {
 	}
     return IfThenElse::make(op->cond, new_true_case, new_false_case);
 }
-
 
 };
 
@@ -405,8 +400,6 @@ int main(){
 			delete_buffer();
 			
 			/* start autodiff */
-			//IRPrinter debug_printer;
-			//cout << "original code: " << debug_printer.print(result[0]) << endl;
 			vector<Stmt> grad_stmt;
 
 			DiffMutator diffMutator;
@@ -462,6 +455,27 @@ int main(){
 				IRPrinter p2;
 				cout << endl << "After:" << endl;
 				cout << p2.print(s) << endl;
+			}
+
+			/* initialize out_expr */
+			for (auto &d_exp : out_expr){
+				auto d_var = d_exp.as<Var>();
+				Expr zero_imm;
+				if (d_var->type() == data_type_i)
+				zero_imm = IntImm::make(data_type_i, 0);
+				else zero_imm = FloatImm::make(data_type_f, 0.0);
+
+				vector<Expr> temp_index_list;
+				for (size_t i = 0; i < d_var->shape.size(); i++){
+					Expr temp_dom = Dom::make(data_type_i, 0, (int) d_var->shape[i]);
+					Expr temp_index = Index::make(data_type_i, "i"+ to_string(i), temp_dom, IndexType::Spatial);
+					temp_index_list.push_back(temp_index);
+				}
+
+				Expr new_var = Var::make(d_var->type(), d_var->name, temp_index_list, d_var->shape);
+				Stmt main_stmt = Move::make(new_var, zero_imm, MoveType::MemToMem);
+				Stmt init_loop = LoopNest::make(temp_index_list, {main_stmt});
+				diffStmt.insert(diffStmt.begin(), init_loop);
 			}
 
 			Group proc = Kernel::make(name, in_expr, out_expr, diffStmt, KernelType::CPU);
