@@ -17,7 +17,6 @@
 using namespace std;
 using namespace Boost::Internal;
 
-//const vector<string> cases({"case1", "case2", "case3", "case4", "case5", "case6", "case7", "case8", "case9", "case10"});
 const vector<string> cases({"case1", "case2", "case3", "case4", "case5", "case6", "case7", "case8", "case9", "case10"});
 const double eps = 1e-6;
 
@@ -50,7 +49,7 @@ Expr visit(Ref<const FloatImm> op) override {
     return FloatImm::make(data_type_f, 0.0);
 }
 
-Expr visit(Ref<const Var> op) override { // TODO: diff actions for diff indices. e.g. A[i, j] and A[i-1, j]
+Expr visit(Ref<const Var> op) override {
     //cout << "Var: " << op->name << endl;
 	Expr new_var = Var::make(op->type(), "d" + op->name, op->args, op->shape);
 	int val = is_same_var(new_var, grad_to) ? 1 : 0; // dx/dx = 1, dy/dx = 0
@@ -83,12 +82,7 @@ Stmt visit(Ref<const Move> op) {
 	// TODO: this is just an ad-hoc fix.
 	new_src = Binary::make(op->src->type(), BinaryOpType::Add, grad_to, new_src); 
 
-    Stmt e = Move::make(grad_to, new_src, op->move_type);
-
-	//IRPrinter debug_printer;
-	//cout << "Move: " << debug_printer.print(e) << endl;
-
-	return e;
+    return Move::make(grad_to, new_src, op->move_type);
 }
 
 Stmt visit(Ref<const IfThenElse> op) override {
@@ -107,9 +101,9 @@ Stmt visit(Ref<const LoopNest> op) override {
     for (auto body : op->body_list) {
         new_body_list.push_back(mutate(body));
     }
-    Stmt e =  LoopNest::make(op->index_list, new_body_list);
-	return e;
+    return LoopNest::make(op->index_list, new_body_list);
 }
+
 
 };
 
