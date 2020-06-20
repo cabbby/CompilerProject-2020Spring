@@ -150,7 +150,7 @@ void grad_case10(float (&dA)[8][8], float (&dB)[9][8]) {
 - 词法分析，语法分析，语法树构建，语法树遍历，目标代码生成。这些编译知识在project1中已经使用过；详见project1的报告。
 - 语法树变换，SDT。Project2使用的主要编译知识为语法制导翻译。IRMutator的工作原理可以看作后缀SDT，实现可以看作递归下降分析。对当前语法树结点进行mutate操作时，mutator首先访问当前结点的子节点，返回mutate之后的子树。然后，mutator根据设置好的语义动作修改当前结点的值，得到一个新的结点（以该结点为根的子树），并返回。有时，我们也使用visitor模式扫描语法树结点，并更新全局变量。全局变量可以看作当前语法树结点的继承属性，故visitor对应的是L型SDD的递归下降分析。
 
-例如，下面的代码为SubstituteVisitor中对Index结点实现的visit函数。我们扫描替换列表，查找当前index是否在替换列表中；如果在，则返回当前index的替换值，否则返回当前的index。
+例如，下面的代码为SubstituteMutator中对Index结点实现的visit函数。我们扫描替换列表，查找当前index是否在替换列表中；如果在，则返回当前index的替换值，否则返回当前的index。
 ```c++
 Expr visit(Ref<const Index> op) override {
   for (auto t : mp_sub) {
